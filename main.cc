@@ -1,6 +1,7 @@
 #include <leveldb/c.h>
 #include <string.h>
 #include <nan.h>
+#include <map>
 
 using v8::Exception;
 using v8::FunctionCallbackInfo;
@@ -13,6 +14,10 @@ using v8::Value;
 
 namespace addon {
   leveldb_t *db;
+
+  static uint32_t iteratorCount = 0;
+  static std::map<uint32_t, leveldb_iterator_t*> iterators;
+  static std::map<uint32_t, leveldb_readoptions_t*> iteratorOptions;
 
   const char* ToCString(const String::Utf8Value& value) {
     return *value ? *value : "string conversion failed";
@@ -155,6 +160,87 @@ namespace addon {
     info.GetReturnValue().Set(Nan::New("deleted").ToLocalChecked());
   }
 
+
+  void IterNew(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+    if (info.Length() != 0) {
+      Nan::ThrowTypeError("Wrong number of arguments");
+      return;
+    }
+
+    leveldb_readoptions_t *roptions;
+    roptions = leveldb_readoptions_create();
+
+    leveldb_iterator_t* iterator = leveldb_create_iterator(db, roptions);
+    leveldb_iter_seek_to_first(iterator);
+    uint32_t id = iteratorCount++;
+    iterators[id] = iterator;
+    iteratorOptions[id] = roptions;
+
+    info.GetReturnValue().Set(Nan::New((uint32_t)id));
+  }
+
+  void IterNext(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+    if (info.Length() != 1) {
+      Nan::ThrowTypeError("Wrong number of arguments");
+      return;
+    }
+
+    uint32_t id = (uint32_t)v8::Number::Cast(*info[0])->Value();
+    leveldb_iterator_t* iter = iterators[id];
+    leveldb_iter_next(iter);
+
+    info.GetReturnValue().Set(Nan::New((uint32_t)id));
+  }
+
+  void IterValid(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+    if (info.Length() != 1) {
+      Nan::ThrowTypeError("Wrong number of arguments");
+      return;
+    }
+
+    uint32_t id = (uint32_t)v8::Number::Cast(*info[0])->Value();
+    uint8_t valid = leveldb_iter_valid(iterators[id]);
+
+    info.GetReturnValue().Set(Nan::New(valid == 0 ? 0 : (id == 0 ? 1 : id)));
+  }
+
+    void IterDestroy(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() != 1) {
+            Nan::ThrowTypeError("Wrong number of arguments");
+            return;
+        }
+
+        uint32_t id = (uint32_t)v8::Number::Cast(*info[0])->Value();
+        leveldb_iter_destroy(iterators[id]);
+        iterators.erase(id);
+    }
+
+    void IterKey(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() != 1) {
+            Nan::ThrowTypeError("Wrong number of arguments");
+            return;
+        }
+
+        uint32_t id = (uint32_t)v8::Number::Cast(*info[0])->Value();
+        size_t keylen;
+        const char* key = leveldb_iter_key(iterators[id], &keylen);
+
+        info.GetReturnValue().Set(Nan::New(key, keylen).ToLocalChecked());
+    }
+
+    void IterValue(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() != 1) {
+            Nan::ThrowTypeError("Wrong number of arguments");
+            return;
+        }
+
+        uint32_t id = (uint32_t)v8::Number::Cast(*info[0])->Value();
+        size_t valuelen;
+        const char* value= leveldb_iter_value(iterators[id], &valuelen);
+
+        info.GetReturnValue().Set(Nan::New(value, valuelen).ToLocalChecked());
+    }
+
   void Init(v8::Local<v8::Object> exports) {
     exports->Set(Nan::New("open").ToLocalChecked(),
       Nan::New<v8::FunctionTemplate>(Open)->GetFunction());
@@ -166,6 +252,18 @@ namespace addon {
       Nan::New<v8::FunctionTemplate>(Put)->GetFunction());
     exports->Set(Nan::New("delete").ToLocalChecked(),
       Nan::New<v8::FunctionTemplate>(Delete)->GetFunction());
+    exports->Set(Nan::New("iter_new").ToLocalChecked(),
+      Nan::New<v8::FunctionTemplate>(IterNew)->GetFunction());
+    exports->Set(Nan::New("iter_next").ToLocalChecked(),
+      Nan::New<v8::FunctionTemplate>(IterNext)->GetFunction());
+    exports->Set(Nan::New("iter_valid").ToLocalChecked(),
+      Nan::New<v8::FunctionTemplate>(IterValid)->GetFunction());
+    exports->Set(Nan::New("iter_destroy").ToLocalChecked(),
+      Nan::New<v8::FunctionTemplate>(IterDestroy)->GetFunction());
+    exports->Set(Nan::New("iter_key").ToLocalChecked(),
+      Nan::New<v8::FunctionTemplate>(IterKey)->GetFunction());
+    exports->Set(Nan::New("iter_value").ToLocalChecked(),
+      Nan::New<v8::FunctionTemplate>(IterValue)->GetFunction());
   }
 
   NODE_MODULE(addon, Init)
