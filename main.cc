@@ -74,13 +74,15 @@ namespace addon {
      return;
     }
 
-    if (!info[0]->IsString()) {
-     Nan::ThrowTypeError("Wrong arguments");
+    if (!node::Buffer::HasInstance(info[0])) {
+     Nan::ThrowTypeError("Wrong arguments: expected a Buffer");
      return;
     }
 
-    String::Utf8Value str(info[0]);
-    const char* arg = ToCString(str);
+    Local<Object> obj = info[0]->ToObject();
+
+    const char* arg = node::Buffer::Data(obj);
+    size_t arglen = node::Buffer::Length(obj);
 
     leveldb_readoptions_t *roptions;
     roptions = leveldb_readoptions_create();
@@ -88,7 +90,7 @@ namespace addon {
     char *read;
     size_t read_len;
     char *err = NULL;
-    read = leveldb_get(db, roptions, arg, str.length(), &read_len, &err);
+    read = leveldb_get(db, roptions, arg, arglen, &read_len, &err);
 
     if (err != NULL) {
       Nan::ThrowError("Read fail");
@@ -97,7 +99,7 @@ namespace addon {
     leveldb_free(err); err = NULL;
 
     leveldb_readoptions_destroy(roptions);
-    info.GetReturnValue().Set(Nan::New(read,read_len).ToLocalChecked());
+    info.GetReturnValue().Set(Nan::NewBuffer(read,read_len).ToLocalChecked());
   }
 
   void Put(const Nan::FunctionCallbackInfo<v8::Value>& info) {
@@ -160,7 +162,6 @@ namespace addon {
     info.GetReturnValue().Set(Nan::New("deleted").ToLocalChecked());
   }
 
-
   void IterNew(const Nan::FunctionCallbackInfo<v8::Value>& info) {
     if (info.Length() != 0) {
       Nan::ThrowTypeError("Wrong number of arguments");
@@ -211,8 +212,11 @@ namespace addon {
         }
 
         uint32_t id = (uint32_t)v8::Number::Cast(*info[0])->Value();
+
+        leveldb_readoptions_destroy(iteratorOptions[id]);
         leveldb_iter_destroy(iterators[id]);
         iterators.erase(id);
+        iteratorOptions.erase(id);
     }
 
     void IterKey(const Nan::FunctionCallbackInfo<v8::Value>& info) {
@@ -224,8 +228,10 @@ namespace addon {
         uint32_t id = (uint32_t)v8::Number::Cast(*info[0])->Value();
         size_t keylen;
         const char* key = leveldb_iter_key(iterators[id], &keylen);
+        char* keyCopy = new char[keylen];
+        std::memcpy(keyCopy, key, keylen);
 
-        info.GetReturnValue().Set(Nan::New(key, keylen).ToLocalChecked());
+        info.GetReturnValue().Set(Nan::NewBuffer(keyCopy, keylen).ToLocalChecked());
     }
 
     void IterValue(const Nan::FunctionCallbackInfo<v8::Value>& info) {
@@ -236,9 +242,12 @@ namespace addon {
 
         uint32_t id = (uint32_t)v8::Number::Cast(*info[0])->Value();
         size_t valuelen;
-        const char* value= leveldb_iter_value(iterators[id], &valuelen);
+        const char* value = leveldb_iter_value(iterators[id], &valuelen);
 
-        info.GetReturnValue().Set(Nan::New(value, valuelen).ToLocalChecked());
+        char* buf = new char[valuelen];
+        memcpy(buf, value, valuelen);
+
+        info.GetReturnValue().Set(Nan::NewBuffer(buf, valuelen).ToLocalChecked());
     }
 
   void Init(v8::Local<v8::Object> exports) {
